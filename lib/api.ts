@@ -22,6 +22,7 @@ export interface FetchNotesResponse {
 interface FetchNotesParams {
     page?: number;
     query?: string;
+    tag?: string;
 }
 
 export interface NewNotePayload {
