@@ -1,63 +1,90 @@
 "use client";
 
-import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import css from "./Modal.module.css";
 
-// Интерфейс для пропсов компонента Modal.
 interface ModalProps {
-    // Определяет, открыто ли модальное окно.
-    isOpen: boolean;
-    // Функция для закрытия модального окна.
-    onClose: () => void;
-    // Дочерние элементы (контент), которые будут отображаться внутри.
     children: React.ReactNode;
+    isOpen?: boolean;
+    onClose?: () => void;
 }
 
-/**
- * Модальное окно.
- * - Использует React Portal для рендеринга вне основного DOM-дерева.
- * - Закрывается по клику на фон (backdrop) или по нажатию клавиши Escape.
- * - Блокирует прокрутку `body`, когда окно открыто.
- */
 const Modal = ({
-    isOpen,
-    onClose,
     children,
-}: ModalProps): React.ReactPortal | null => {
-    // Эффект для обработки нажатия клавиши "Escape"
+    isOpen: isOpenProp,
+    onClose: onCloseProp,
+}: ModalProps) => {
+    const router = useRouter();
+
+    const handleClose = useCallback(() => {
+        if (onCloseProp) {
+            onCloseProp();
+        } else {
+            router.back();
+        }
+    }, [onCloseProp, router]);
+
+    const isOpen = isOpenProp ?? true;
+    const dialogRef = useRef<HTMLDivElement>(null);
+
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
-                onClose();
+                handleClose();
             }
         };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [handleClose]);
 
-        if (isOpen) {
-            window.addEventListener("keydown", handleKeyDown);
-        }
-
-        // Очистка: удаляем обработчик при размонтировании компонента или при закрытии модального окна
-        return () => {
-            window.removeEventListener("keydown", handleKeyDown);
-        };
-    }, [isOpen, onClose]);
-
-    // Эффект для блокировки прокрутки фона
+    // Блокируем скролл и “отключаем” фон при открытой модалке
     useEffect(() => {
-        if (isOpen) {
-            const prevOverflow = document.body.style.overflow;
-            document.body.style.overflow = "hidden"; // Блокируем скролл
-            return () => {
-                document.body.style.overflow = prevOverflow; // Возвращаем скролл при закрытии
-            };
+        if (!isOpen) return;
+
+        const body = document.body;
+        const html = document.documentElement;
+
+        // Сохраняем предыдущие inline-стили, чтобы корректно восстановить
+        const prevOverflow = body.style.overflow;
+        const prevPaddingRight = body.style.paddingRight;
+
+        // Компенсируем исчезающий скроллбар, чтобы не было “скачка” контента
+        const scrollbarWidth = window.innerWidth - html.clientWidth;
+        body.style.overflow = "hidden";
+        if (scrollbarWidth > 0) {
+            const currentPadding =
+                parseFloat(getComputedStyle(body).paddingRight) || 0;
+            body.style.paddingRight = `${currentPadding + scrollbarWidth}px`;
         }
+
+        // Делаем фон недоступным для взаимодействия и чтения скринридером
+        const blockedNodes = Array.from(
+            document.querySelectorAll<HTMLElement>("header, main, footer")
+        );
+        blockedNodes.forEach((el) => {
+            el.setAttribute("aria-hidden", "true");
+            // inert блокирует фокус и события
+            el.setAttribute("inert", "");
+        });
+
+        return () => {
+            body.style.overflow = prevOverflow;
+            body.style.paddingRight = prevPaddingRight;
+            blockedNodes.forEach((el) => {
+                el.removeAttribute("aria-hidden");
+                el.removeAttribute("inert");
+            });
+        };
     }, [isOpen]);
 
-    // Обработчик клика по фону для закрытия
     const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (e.target === e.currentTarget) {
-            onClose();
+        if (
+            dialogRef.current &&
+            !dialogRef.current.contains(e.target as Node)
+        ) {
+            handleClose();
         }
     };
 
@@ -65,16 +92,16 @@ const Modal = ({
         return null;
     }
 
-    // Используем createPortal для рендеринга модального окна в `document.body`
-    // Это позволяет избежать проблем с z-index и стилизацией.
     return createPortal(
-        <div
-            className={css.backdrop}
-            role="dialog"
-            aria-modal="true"
-            onClick={handleBackdropClick}
-        >
-            <div className={css.modal}>{children}</div>
+        <div className={css.backdrop} onClick={handleBackdropClick}>
+            <div
+                ref={dialogRef}
+                className={css.modal}
+                role="dialog"
+                aria-modal="true"
+            >
+                {children}
+            </div>
         </div>,
         document.body
     );
